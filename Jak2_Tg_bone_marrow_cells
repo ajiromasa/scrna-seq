@@ -405,7 +405,7 @@ for cond, (ad, pt_key, start_label) in datasets.items():
         b = get_pt(ad, "cell_type", endpoint, pt_key)
         if len(a) == 0 or len(b) == 0:
             rows.append({
-                "condition": cond, "path": path_name, "delta_median": np.nan, #NANを記録
+                "condition": cond, "path": path_name, "delta_median": np.nan,
                 "ci_lo": np.nan, "ci_hi": np.nan, "pt_key": pt_key,
                 f"n_{start_label}": len(a), f"n_{endpoint}": len(b), "start": start_label
             })
@@ -446,7 +446,6 @@ ax = sns.barplot(
 )
 for container, cond in zip(ax.containers, hue_order):
     sub = plot_df[plot_df["condition"] == cond]
-    # container.patches と sub の行を 1:1 で対応
     for bar, (_, r) in zip(container.patches, sub.iterrows()):
         y = bar.get_height()    
         x = bar.get_x() + bar.get_width()/2.0  
