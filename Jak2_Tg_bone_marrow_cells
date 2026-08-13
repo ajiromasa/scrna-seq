@@ -1,0 +1,461 @@
+# scRNA-seq analysis for mouse haematocytes (2026/8/13, Masahiko Ajiro)
+# adata4m_wt and adata4m_mt (# accession xxxx in GEO) for processed count data and of wild type and mutant JAK2-transgenic mouse Lin subsets (CD3,4,8,19,B220,Ter119,CD127,Gr-1)-negative and cKit-positive bone marrow cells.
+
+###################################################
+#1. import packages
+
+import scanpy as sc
+import anndata as ad
+import scvelo as scv
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+from scipy import sparse
+
+-----
+anndata             0.11.4
+matplotlib          3.10.9
+numpy               2.2.6
+pandas              2.3.3
+scanpy              1.11.1
+scvelo              0.3.3
+seaborn             0.13.2
+session_info        v1.0.1
+-----
+
+###################################################
+#2. acquire count data
+
+adata1 = sc.read_h5ad("UedaWTA1_scVelo.h5ad")
+adata2 = sc.read_h5ad("UedaWTA2_scVelo.h5ad")
+
+###################################################
+#3. acquire cell hushing info
+df1 = pd.read_csv("raw/matrix_inflection_demulti_UedaWTA1.txt.gz",
+                  sep="\t",
+                  index_col = 0,
+                  compression="gzip")
+wta1 = ad.AnnData(df1.T)
+df2 = pd.read_csv("raw/matrix_inflection_demulti_UedaWTA2.txt.gz",
+                  sep="\t",
+                  index_col = 0,
+                  compression="gzip")
+wta2 = ad.AnnData(df2.T)
+
+mask_n = ~wta1.obs_names.str.startswith("doublet_")
+mask_1 = wta1.obs_names.str.startswith("A951_")
+mask_2 = wta1.obs_names.str.startswith("A952_")
+mask_3 = wta1.obs_names.str.startswith("A953_")
+wta1_n = wta1[mask_n, :].copy()
+wta1_1 = wta1[mask_1, :].copy()
+wta1_2 = wta1[mask_2, :].copy()
+wta1_3 = wta1[mask_3, :].copy()
+
+mask_n = ~wta2.obs_names.str.startswith("doublet_")
+mask_1 = wta2.obs_names.str.startswith("A954_")
+mask_2 = wta2.obs_names.str.startswith("A955_")
+mask_3 = wta2.obs_names.str.startswith("A961_")
+wta2_n = wta1[mask_n, :].copy()
+wta2_1 = wta2[mask_1, :].copy()
+wta2_2 = wta2[mask_2, :].copy()
+wta2_3 = wta2[mask_3, :].copy()
+
+#wta1_n.obs_names = wta1_n.obs_names.str.split("_").str[-1]
+wta1_1.obs_names = wta1_1.obs_names.str.split("_").str[-1]
+wta1_2.obs_names = wta1_2.obs_names.str.split("_").str[-1]
+wta1_3.obs_names = wta1_3.obs_names.str.split("_").str[-1]
+
+#wta2_n.obs_names = wta2_n.obs_names.str.split("_").str[-1]
+wta2_1.obs_names = wta2_1.obs_names.str.split("_").str[-1]
+wta2_2.obs_names = wta2_2.obs_names.str.split("_").str[-1]
+wta2_3.obs_names = wta2_3.obs_names.str.split("_").str[-1]
+
+###################################################
+#4. genotype annotation and removal of heterotypic duplex
+
+common = adata1.obs_names.intersection(wta1_n.obs_names)
+adata1_n = adata1[common, :].copy()
+common = adata2.obs_names.intersection(wta2_n.obs_names)
+adata2_n = adata2[common, :].copy()
+
+tmp={}
+tmp["wt"] = adata1_n.copy()
+tmp["mt"] = adata2_n.copy()
+adata3_n = ad.concat(tmp, label = "genotype")
+
+adata3_n.obs_names_make_unique()
+adata3_n.layers["counts"] = adata3_n.X.copy()
+adata3_n2 = adata3_n.copy()
+
+###################################################
+#5. count normalization and Leiden clusering
+
+sc.pp.normalize_total(adata3_n2)
+sc.pp.log1p(adata3_n2)
+sc.tl.pca(adata3_n2, n_comps = 50, svd_solver = "all")
+sc.pp.neighbors(adata3_n2)
+sc.tl.umap(adata3_n2)
+
+sc.tl.leiden(adata3_n2, flavor="igraph", n_iterations=2, resolution=2)
+adata3_n2_wt = adata3_n2[adata3_n2.obs["genotype"] == "wt"].copy()
+adata3_n2_mt = adata3_n2[adata3_n2.obs["genotype"] == "mt"].copy()
+
+###################################################
+#6. removal of differentiated monocyte cluster
+
+adata3_x = adata3_n2[~adata3_n2.obs["leiden"].isin(mono)].copy() #mono; the list of monocyte marker gene-positive clusters
+common = adata3_n.obs_names.intersection(adata3_x.obs_names)
+adata4 = adata3_n[common, :].copy()
+
+###################################################
+#7. removal of low apoptotic cells (mitochondrial gene count >= 5”)
+
+adata4.var['mt'] = adata4.var_names.str.startswith('mt-') 
+sc.pp.calculate_qc_metrics(adata4, qc_vars=['mt'], percent_top=None, log1p=False, inplace=True
+adata4m = adata4[adata4.obs['pct_counts_mt'] < 5, :].copy()
+sc.pp.normalize_total(adata4m)
+adata4m.layers["n_count"] = adata4m.X.copy()
+sc.pp.log1p(adata4m)
+sc.tl.pca(adata4m, n_comps = 50, use_highly_variable=False, svd_solver = "all")
+sc.pp.neighbors(adata4m)
+sc.tl.umap(adata4m)
+sc.tl.leiden(adata4m, flavor="igraph", n_iterations=2, resolution=5)
+adata4m_wt = adata4m[adata4m.obs["genotype"] == "wt"].copy()
+adata4m_mt = adata4m[adata4m.obs["genotype"] == "mt"].copy()
+
+###################################################
+#8. cell type annotation based on distribution of representative marker genes (same procedure apply for adata4m, adata4m_wt, and adata4m_mt)
+
+marker_genes=["Ly6a","Esam","Procr","Slamf1","Flt3","Cd9","Gata1","Gata2","Itga2b","Klf1","Csf1r","Fcgr3","Fcgr2b","Cd48","Runx1"]
+sc.pl.stacked_violin(
+    adata4m,
+    var_names=marker_genes,
+    groupby="cell_type",
+    #standard_scale="var",
+    cmap="viridis_r",
+    figsize=(7, 2.5),
+    show=False
+)
+plt.tight_layout()
+plt.savefig("marker.pdf", bbox_inches="tight")
+plt.show()
+
+scv.pl.umap(adata4m, color = ["Ly6a","Esam","Procr","Slamf1","Flt3","Cd9","Gata1","Gata2","Itga2b","Klf1","Csf1r","Fcgr3","Fcgr2b","Cd48","Runx1"])
+adata4m.obs["cell_type"] = None 
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["9","65"]), "cell_type"] = "MkP(HSC)"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["55","45"]), "cell_type"] = "MkP(MEP)"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["8"]), "cell_type"] = "LMPP"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["56","57","68"]), "cell_type"] = "CLP"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["43"]), "cell_type"] = "EryP"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["61"]), "cell_type"] = "MEP"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["59","18","34"]), "cell_type"] = "HSC(WT)"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["72","73","74"]), "cell_type"] = "HSC(VF)"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["39","70","71","64","67","11","23","53","69","62","33","51","16","17","31"]), "cell_type"] = "MPP"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["50","21","52","5","14","30","46","26", "1"]), "cell_type"] = "CMP"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["66","47","49","37","32","24","25","54","42","4", "36","3","27","40","20","38", "41","28"]), "cell_type"] = "MDP"
+adata4m.obs.loc[adata4m.obs["leiden"].isin(["6","29","7","0","15","10","35","1","13","58","12","19","48","22","44"]), "cell_type"] = "GMP"
+order = ["HSC(WT)","HSC(VF)","MPP","CMP","MEP","EryP","MkP(MEP)","MkP(HSC)","MDP","GMP","LMPP", "CLP"] 
+adata4m.obs["cell_type"] = adata4m.obs["cell_type"].astype(pd.CategoricalDtype(categories=order, ordered = True))
+celltype_colors = {
+    "HSC(WT)": "#FF0000", "HSC(VF)": "#FF0000", "MPP": "#ffa746", "CMP": "#ffff00",  "MEP": "#50C878", "EryP": "#9C9C9C",
+    "MkP(HSC)": "#a6f600", "MkP(MEP)": "#00FF00", "GMP": "#87CEEB", "MDP": "#FFDEAD", "CLP": "#9400D3", "LMPP": "#C4A289"
+}
+
+adata4m.uns["cell_type_colors"] = [celltype_colors[c] for c in adata4m.obs["cell_type"].cat.categories]    
+adata4m_wt.uns["cell_type_colors"] = [celltype_colors[c] for c in adata4m_wt.obs["cell_type"].cat.categories]
+adata4m_mt.uns["cell_type_colors"] = [celltype_colors[c] for c in adata4m_mt.obs["cell_type"].cat.categories]
+adata4m=adata4m[adata4m.obs["cell_type"].notna(),:].copy()
+adata4m_wt=adata4m_wt[adata4m_wt.obs["cell_type"].notna(),:].copy()
+adata4m_mt=adata4m_mt[adata4m_mt.obs["cell_type"].notna(),:].copy()
+
+###################################################
+#9. UMAP projection (by cell types or genotype) and cell counting
+sc.pl.umap(adata4m, size = 2,legend_loc="on data", legend_fontsize = 4, color = ["cell_type"])
+sc.pl.umap(adata4m_wt, size = 2,legend_loc="on data", legend_fontsize = 4, color = ["cell_type"])
+sc.pl.umap(adata4m_mt, size = 2, legend_loc="on data", legend_fontsize = 4,color = ["cell_type"])
+
+adata4m_wt.obs["cell_type"].value_counts()
+adata4m_mt.obs["cell_type"].value_counts()
+
+genotype_colors = {"wt": "#FF00FF", "mt": "#50C878"}
+sc.pl.umap(adata4m_2, size = 1,legend_fontsize = 7, color = ["genotype"], palette=genotype_colors"
+
+###################################################
+#10. analysis by cell hushing
+
+common = adata4m_wt.obs_names.intersection(wta1_1.obs_names)
+adata4m_wt1 = adata4m_wt[common, :].copy()
+common = adata4m_wt.obs_names.intersection(wta1_2.obs_names)
+adata4m_wt2 = adata4m_wt[common, :].copy()
+common = adata4m_wt.obs_names.intersection(wta1_3.obs_names)
+adata4m_wt3 = adata4m_wt[common, :].copy()
+common = adata4m_mt.obs_names.intersection(wta2_1.obs_names)
+adata4m_mt1 = adata4m_mt[common, :].copy()
+common = adata4m_mt.obs_names.intersection(wta2_2.obs_names)
+adata4m_mt2 = adata4m_mt[common, :].copy()
+common = adata4m_mt.obs_names.intersection(wta2_3.obs_names)
+adata4m_mt3 = adata4m_mt[common, :].copy()
+sc.pl.umap(adata4m_wt1, size = 5,legend_fontsize = 7, color = ["cell_type"])
+sc.pl.umap(adata4m_wt2, size = 5,legend_fontsize = 7, color = ["cell_type"])
+sc.pl.umap(adata4m_wt3, size = 5,legend_fontsize = 7, color = ["cell_type"])
+sc.pl.umap(adata4m_mt1, size = 5,legend_fontsize = 7, color = ["cell_type"])
+sc.pl.umap(adata4m_mt2, size = 5,legend_fontsize = 7, color = ["cell_type"])
+sc.pl.umap(adata4m_mt3, size = 5,legend_fontsize = 7, color = ["cell_type"])
+
+###################################################
+#11. calculating cell populations by cell types
+
+celltype_colors = {"HSC(WT)": "#FF0000", "HSC(VF)": "#FF0000", "MPP": "#ffa746", "CMP": "#ffff00", "MEP": "#50C878", "EryP": "#9C9C9C",
+    "MkP(HSC)": "#a6f600", "MkP(MEP)": "#00FF00", "GMP": "#87CEEB", "MDP": "#FFDEAD", "CLP": "#9400D3","LMPP": "#C4A289"}
+color_list = []
+for ct in pivot_df.columns:
+    if ct in celltype_colors:
+        color_list.append(celltype_colors[ct])
+    else:
+        color_list.append("#808080")
+def get_celltype_fraction(adata, label):
+    s = adata.obs["cell_type"].value_counts(normalize=True) * 100
+    return pd.DataFrame({"cell_type": s.index, "fraction": s.values, "condition": label})
+df_wt = get_celltype_fraction(adata4m_wt_2, "WT")
+df_mt = get_celltype_fraction(adata4m_mt_2, "MT")
+df = pd.concat([df_wt, df_mt], ignore_index=True)
+pivot_df = df.pivot(index="condition", columns="cell_type", values="fraction").fillna(0)
+pivot_df = pivot_df.reindex(["WT", "MT"])
+pivot_df.plot(kind="bar", stacked=True, figsize=(4,4), edgecolor="black", color=color_list)
+
+plt.ylabel("cell fraction (%)")
+plt.xlabel("")
+plt.title("Cell type composition (stacked %)")
+plt.legend(title="cell_type", bbox_to_anchor=(1.05, 1), loc="upper left", frameon=False)
+plt.tight_layout()
+plt.show()
+
+def get_celltype_fraction(adata, label):
+    s = adata.obs["cell_type"].value_counts(normalize=True) * 100
+    return pd.DataFrame({"cell_type": s.index, "fraction": s.values, "condition": label})
+
+df_wt1 = get_celltype_fraction(adata4m_wt1, "WT1")
+df_wt2 = get_celltype_fraction(adata4m_wt2, "WT2")
+df_wt3 = get_celltype_fraction(adata4m_wt3, "WT3")
+df_mt1 = get_celltype_fraction(adata4m_mt1, "MT1")
+df_mt2 = get_celltype_fraction(adata4m_mt2, "MT2")
+df_mt3 = get_celltype_fraction(adata4m_mt3, "MT3")
+df = pd.concat([df_wt1, df_wt2, df_wt3, df_mt1, df_mt2, df_mt3], ignore_index=True)
+pivot_df = df.pivot(index="condition", columns="cell_type", values="fraction").fillna(0)
+pivot_df = pivot_df.reindex(["WT1","WT2","WT3","MT1","MT2","MT3"])
+pivot_df.plot(kind="bar", stacked=True, figsize=(4,4), edgecolor="black", color=color_list)
+
+plt.ylabel("cell fraction (%)")
+plt.xlabel("")
+plt.title("Cell type composition (stacked %)")
+plt.legend(title="cell_type", bbox_to_anchor=(1.05, 1), loc="upper left", frameon=False)
+plt.tight_layout()
+plt.savefig("celltype_composition_individual.pdf", bbox_inches="tight")
+plt.show()
+
+print(adata4m_wt1.obs["cell_type"].value_counts())
+print(adata4m_wt2.obs["cell_type"].value_counts())
+print(adata4m_wt3.obs["cell_type"].value_counts())
+print(adata4m_mt1.obs["cell_type"].value_counts())
+print(adata4m_mt2.obs["cell_type"].value_counts())
+print(adata4m_mt3.obs["cell_type"].value_counts())
+
+###################################################
+#12. normalized count table preparation
+
+mat = adata4m.layers["n_count"]
+cell_type = adata4m.obs["cell_type"]
+
+mean_by_ct = {}
+for ct in cell_type.unique():
+    idx = (cell_type == ct).values 
+    sub = mat[idx, :]
+    m = np.asarray(sub.mean(axis=0)).ravel()
+    mean_by_ct[ct] = m
+
+mean_df = pd.DataFrame(mean_by_ct, index=adata4m_wt_2.var_names).T
+mean_df.T.to_csv(“output_normalized_counts.tsv", sep="\t")
+
+###################################################
+#13. velocity annotation and pseudotime calculation (same procedure apply for adata4m, adata4m_wt, and adata4m_mt)
+
+adata = adata4m.copy() 
+def _clean_inplace(M):
+    if sparse.issparse(M):
+        M = M.tocsr(copy=True)
+        if M.dtype != np.float64:
+            M.data = M.data.astype(np.float64, copy=False)
+        bad = ~np.isfinite(M.data)
+        if bad.any():
+            M.data[bad] = 0.0
+        M.data[M.data < 0] = 0.0
+        return M
+    else:
+        A = np.asarray(M, dtype=np.float64, order="C")
+        A[~np.isfinite(A)] = 0.0
+        A[A < 0] = 0.0
+        return A
+
+adata.X = _clean_inplace(adata.X)
+for lyr in ["spliced", "unspliced", "counts"]:
+    if lyr in adata.layers:
+        adata.layers[lyr] = _clean_inplace(adata.layers[lyr])
+
+def _ratio_bad(M):
+    if sparse.issparse(M):
+        data = M.data 
+    else:
+        data = np.asarray(M)
+    return float(np.mean(~np.isfinite(data)))
+
+def _ratio_zerovar(M):
+    A = M.toarray() if sparse.issparse(M) else np.asarray(M)
+    return float(np.mean(np.nanstd(A, axis=0) == 0))
+
+print("layers:", list(adata.layers.keys()))
+print("NaN/Inf ratio X:", _ratio_bad(adata.X))
+print("NaN/Inf ratio spliced:", _ratio_bad(adata.layers["spliced"]))
+print("NaN/Inf ratio unspliced:", _ratio_bad(adata.layers["unspliced"]))
+print("zero-var spliced:", _ratio_zerovar(adata.layers["spliced"]))
+print("zero-var unspliced:", _ratio_zerovar(adata.layers["unspliced"]))
+
+scv.pp.filter_and_normalize(adata, min_shared_counts=30,  n_top_genes=3000, log=False)
+S, U = adata.layers["spliced"], adata.layers["unspliced"]
+if sparse.issparse(S): S = S.toarray()
+if sparse.issparse(U): U = U.toarray()
+keep = (np.nanstd(S, axis=0) > 0) & (np.nanstd(U, axis=0) > 0)
+adata = adata[:, keep].copy()
+sc.pp.pca(adata, n_comps=30, use_highly_variable=True, svd_solver="arpack") 
+sc.pp.neighbors(adata, n_neighbors=30, n_pcs=30)
+scv.pp.moments(adata, n_pcs=30, n_neighbors=30)
+scv.tl.velocity(adata, mode="stochastic", use_highly_variable=True, fit_offset=True, perc=[5, 95], min_r2=0.01)
+
+adata4m_v = adata.copy()
+scv.tl.velocity_graph(adata4m_v, n_jobs=14, show_progress_bar=False)
+scv.pl.velocity_embedding_stream(
+    adata4m_v, basis="umap", color=["cell_type"], color_map = "Reds",legend_fontsize = 4,
+    arrow_size=0.7,size=5, linewidth=0.5, density=2, dpi=450
+)
+
+# velocity pseudotime
+scv.tl.recover_dynamics(adata4m_v, n_jobs=14)
+scv.tl.velocity_pseudotime(adata4m_v) 
+scv.tl.latent_time(adata4m_v)   
+
+# dpt pseudotime calculation
+
+def set_dpt_root_cluster_center_diffmap(adata, group_key, root_label):
+    mask = adata.obs[group_key].astype(str).values == str(root_label) 
+    Xdm = adata.obsm["X_diffmap"][mask] 
+    center = Xdm.mean(axis=0)
+    d2 = np.sum((Xdm - center) ** 2, axis=1)
+    idx_local = np.argmin(d2) 
+    root_obs_name = adata.obs_names[mask][idx_local]
+    adata.uns["iroot"] = int(adata.obs_names.get_loc(root_obs_name))
+    return root_obs_name
+
+root_wt1_name = set_dpt_root_by_celltype(adata4m_wt1, "cell_type", "HSC(WT)")
+sc.tl.dpt(adata4m_wt1, n_dcs=10)
+root_wt2_name = set_dpt_root_by_celltype(adata4m_wt2, "cell_type", "HSC(WT)")
+sc.tl.dpt(adata4m_wt2, n_dcs=10)
+root_wt3_name = set_dpt_root_by_celltype(adata4m_wt3, "cell_type", "HSC(WT)")
+sc.tl.dpt(adata4m_wt3, n_dcs=10) 
+root_mt1_name = set_dpt_root_by_celltype(adata4m_mt1, "cell_type", "HSC(MT)")
+sc.tl.dpt(adata4m_mt1, n_dcs=10) 
+root_mt2_name = set_dpt_root_by_celltype(adata4m_mt2, "cell_type", "HSC(MT)")
+sc.tl.dpt(adata4m_mt2, n_dcs=10) 
+root_mt3_name = set_dpt_root_by_celltype(adata4m_mt3, "cell_type", "HSC(MT)")
+sc.tl.dpt(adata4m_mt3, n_dcs=10) 
+
+def get_pt(adata, group_key, cluster, pt_key):
+    s = adata.obs.copy()
+    if pt_key not in s.columns:raise KeyError(f"{pt_key} not in adata.obs")
+    if group_key not in s.columns:raise KeyError(f"{group_key} not in adata.obs")
+
+    s = s.replace([np.inf, -np.inf], np.nan).dropna(subset=[pt_key])
+    s = s[s[group_key].astype(str) == str(cluster)]
+    return s[pt_key].to_numpy()
+
+def bootstrap_ci_delta_median(a, b, B=2000, seed=0):
+    rng = np.random.default_rng(seed)
+    est = []
+    for _ in range(B):
+        aa = rng.choice(a, size=len(a), replace=True)
+        bb = rng.choice(b, size=len(b), replace=True)
+        est.append(np.median(bb) - np.median(aa))
+    lo, hi = np.percentile(est, [2.5, 97.5])
+    return float(np.median(b) - np.median(a)), float(lo), float(hi)
+
+datasets = {
+    "WT1": (adata4m_wt1, "dpt_pseudotime", "HSC(WT)"),
+    "WT2": (adata4m_wt2, "dpt_pseudotime", "HSC(WT)"),
+    "WT3": (adata4m_wt3, "dpt_pseudotime", "HSC(WT)"),
+    "MT1": (adata4m_mt1, "dpt_pseudotime", "HSC(MT)"),
+    "MT2": (adata4m_mt2, "dpt_pseudotime", "HSC(MT)"),
+    "MT3": (adata4m_mt3, "dpt_pseudotime", "HSC(MT)")
+}
+
+paths = {"HSC_to_MkP": "MkP", "HSC_to_HSC-MkP":     "MkP(HSC)",}
+
+rows = []
+for cond, (ad, pt_key, start_label) in datasets.items():
+    for path_name, endpoint in paths.items():
+        a = get_pt(ad, "cell_type", start_label, pt_key)
+        b = get_pt(ad, "cell_type", endpoint, pt_key)
+        if len(a) == 0 or len(b) == 0:
+            rows.append({
+                "condition": cond, "path": path_name, "delta_median": np.nan, #NANを記録
+                "ci_lo": np.nan, "ci_hi": np.nan, "pt_key": pt_key,
+                f"n_{start_label}": len(a), f"n_{endpoint}": len(b), "start": start_label
+            })
+            continue
+        delta, lo, hi = bootstrap_ci_delta_median(a, b, B=2000, seed=123)
+        rows.append({
+            "condition": cond, "path": path_name, "delta_median": delta,
+            "ci_lo": lo, "ci_hi": hi, "pt_key": pt_key,
+            f"n_{start_label}": len(a), f"n_{endpoint}": len(b), "start": start_label
+        })
+
+Delta = pd.DataFrame(rows)
+print(Delta)
+
+hue_order  = ["WT1","WT2","WT3","MT1","MT2","MT3"]
+path_order = ["HSC_to_MkP", "HSC_to_HSC-MkP"]
+
+plot_df = Delta.copy()
+plot_df["delta_median"] = pd.to_numeric(plot_df["delta_median"], errors="coerce")
+plot_df["ci_lo"]        = pd.to_numeric(plot_df["ci_lo"], errors="coerce")
+plot_df["ci_hi"]        = pd.to_numeric(plot_df["ci_hi"], errors="coerce")
+plot_df = plot_df.dropna(subset=["delta_median","ci_lo","ci_hi"])
+dups = plot_df.groupby(["path","condition"]).size()
+if (dups > 1).any():
+    plot_df = (plot_df.sort_values(["path","condition"])
+                        .drop_duplicates(subset=["path","condition"], keep="first"))
+hue_order  = ["WT1","WT2","WT3","MT1","MT2","MT3"]
+path_order = ["HSC_to_MkP","HSC_to_HSC-MkP"]
+plot_df["path"]      = pd.Categorical(plot_df["path"], categories=path_order, ordered=True)
+plot_df["condition"] = pd.Categorical(plot_df["condition"], categories=hue_order, ordered=True)
+plot_df = plot_df.sort_values(["path","condition"])
+palette = {"WT1":"lightgreen","WT2":"yellowgreen","WT3":"green", "MT1":"magenta","MT2":"red","MT3":"purple"}
+plt.figure(figsize=(5,4))
+ax = sns.barplot(
+    data=plot_df, x="path", y="delta_median",
+    hue="condition", order=path_order, hue_order=hue_order,
+    errorbar=None, palette=palette, edgecolor="black"
+)
+for container, cond in zip(ax.containers, hue_order):
+    sub = plot_df[plot_df["condition"] == cond]
+    # container.patches と sub の行を 1:1 で対応
+    for bar, (_, r) in zip(container.patches, sub.iterrows()):
+        y = bar.get_height()    
+        x = bar.get_x() + bar.get_width()/2.0  
+        yerr_low  = max(0.0, y - r["ci_lo"])
+        yerr_high = max(0.0, r["ci_hi"] - y)
+        plt.errorbar(x, y, yerr=np.array([[yerr_low],[yerr_high]]), fmt="none", ecolor="black", elinewidth=1.2, capsize=3, capthick=1.2)
+ax.set_xlabel("")
+ax.set_ylabel("pseudotime median Δ (HSC → endpoint)")
+ax.set_title("DPT_pseudotime")
+ax.legend(title="condition", bbox_to_anchor=(1.05,1), loc="upper left", frameon=False)
+plt.tight_layout()
+plt.show()
