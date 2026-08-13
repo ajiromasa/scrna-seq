@@ -1,4 +1,4 @@
-# scRNA-seq analysis for mouse haematocytes (2026/8/13, Masahiko Ajiro)
+# scRNA-seq analysis for mouse bone marrow cells (2026/8/13, Masahiko Ajiro)
 # adata4m_wt and adata4m_mt (# accession xxxx in GEO) for processed count data and of wild type and mutant JAK2-transgenic mouse Lin subsets (CD3,4,8,19,B220,Ter119,CD127,Gr-1)-negative and cKit-positive bone marrow cells.
 
 ###################################################
