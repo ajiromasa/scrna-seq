@@ -11,9 +11,14 @@ import pandas as pd
 import anndata as ad
 import scipy.sparse as sp
 
-sc.logging.print_versions()
-PackageVersionscvelo0.3.4session_info1.0.1 (v1.0.1)ComponentInfoPython3.10.20 
-DependencyVersiontexttable1.7.0debugpy1.8.21tornado6.5.7setuptools82.0.1python-dateutil2.9.0.post0numba0.65.1pytz2026.2stack_data0.6.3pure_eval0.2.3h5py3.16.0charset-normalizer3.4.7llvmlite0.47.0prompt_toolkit3.0.52asttokens3.0.1six1.17.0jedi0.20.0executing2.2.1decorator5.3.1ipython8.37.0pillow12.2.0natsort8.4.0pickleshare0.7.5cycler0.12.1parso0.8.7igraph0.11.9kiwisolver1.5.0joblib1.5.3patsy1.0.2appnope0.1.4statsmodels0.14.6psutil7.2.2
+# versions:
+scanpy: 1.11.5
+anndata: 0.11.4
+scvelo: 0.3.4
+numpy: 2.2.6
+matplotlib: 3.10.9
+seaborn: 0.13.2
+pandas: 2.3.3
 
 a = sc.read_10x_h5("h5d/PDX21_filtered.h5")
 b = sc.read_10x_h5("h5d/PDX22_filtered.h5")
